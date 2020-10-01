@@ -1,0 +1,350 @@
+\documentclass[orivec,envcountsame, a4paper, 11pt]{llncs}
+
+\usepackage{amsmath, amsfonts, amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[T1]{fontenc}
+\usepackage{fullpage}
+\usepackage{lmodern}
+\usepackage{graphicx}
+\usepackage[colorlinks=true,
+            citecolor=blue,
+            linkcolor=blue,
+            urlcolor=blue,
+            pdfstartview=FitH,
+            bookmarks=true,
+            bookmarksopen=true,
+            bookmarksdepth=2,
+            %backref=page
+            ]{hyperref}
+\usepackage{xspace}
+\usepackage{enumerate}
+\usepackage{xcolor}
+\usepackage{comment}
+\usepackage{enumitem}
+\usepackage{tikz}
+\def\checkmark{\tikz\fill[scale=0.4](0,.35) -- (.25,0) -- (1,.7) -- (.25,.15) -- cycle;}
+
+\title{COMP0057 -- Literature Review\thanks{This report is submitted as part requirement for the module COMP0057 Research in Information Security at University College London. It is substantially the result of my own work except where explicitly indicated in the text. The report may be freely copied and distributed provided the source is explicitly acknowledged.} \\ \vspace{2mm}
+\large Establishing Cross-VM Communication Channels in IaaS Public Clouds \\}
+\author{Nicolas Mohnblatt}
+\institute{
+  UCL, \email{nicolas.mohnblatt19@ucl.ac.uk}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+ In this survey, we consider the security of Infrastructure-as-a-Service clouds. Users of these services launch virtual machines (VMs) on shared hardware. We consider what could happen if an attacker registers as a legitimate user and attempts to break isolation boundaries between VMs. We find that researchers have managed to force the co-location of two attacker VMs, and force the co-location of an attacker's VM with that of a target. We investigate techniques that abuse the shared hardware to establish cross-VM communication channels. We find that state-of-the-art techniques allow to build covert channels robust enough to support a fully functional SSH connection.
+\end{abstract}
+
+\section*{Introduction}
+\label{sec:introduction}
+
+\begin{comment}
+	- What are IaaS clouds and why popular? (explain that user can launch VMs. Def. VM and instances, cloud)
+	- Security questions that come with sharing infrastructure
+	- Present the threat model and explain goal of this survey (def. co-residence, covert and side channels)
+	- Explain structure of the report
+\end{comment}
+
+\paragraph{} \textit{Infrastructure-as-a-Service} (IaaS) is a business model for cloud computing that has grown in popularity in the last decade. In this model, a service provider offers its users to run \textit{virtual machines} (VMs; also known as \textit{instances} in the IaaS context) on the provider's hardware. By doing so, the provider can use the same hardware for multiple tenants, thus benefiting from economies of scale and reducing costs. To date, the three largest IaaS public clouds are Amazon Elastic Compute Cloud (EC2), Google Compute Engine (GCE) and Microsoft Azure.
+
+\paragraph{} Such a model may cause participants to share hardware with unexpected neighbours: one can imagine cases where a company's VM is running on the same physical machine as that of their direct competitor. When VMs run on the same physical machine, we say that these VMs are \textit{co-resident} (or alternatively, \textit{co-located}). Cases like the one described highlight the fact that isolation between co-resident VMs is a priority for IaaS cloud security. Typically, this isolation is provided in software through the use of virtualisation and a \textit{hypervisor} -- software that runs on a physical machine to schedule and switch between the execution of different VMs.
+
+\paragraph{}In this literature survey, we wish to explore the area of research that has focused on breaking such isolation in IaaS cloud services. We consider that a breach occurs when a communication channel is established between co-resident VMs and information is exchanged. A more precise definition and the underlying threat models are presented in \autoref{sec:threatmodel}. The questions we are interested in answering are (i) can we guarantee VM co-location and, (ii) how can we use the shared hardware to bypass software isolation. To solve (i), research is needed to understand and take advantage of the mechanisms used by cloud service providers to allocate VMs to physical machines. Solving (ii) is not trivial either since physical machine specifications are usually hidden from the end-user. In such a context, it may be the case that co-resident VMs share fewer resources than expected, thus thwarting naive attacks.
+
+
+\paragraph{} The rest of this survey will be structured in the following way: in \autoref{sec:threatmodel} we present the relevant threat models and provide definitions, in \autoref{sec:placement} we present the papers that solve (i) and led the way for this field of research, in \autoref{sec:attacks} we chronologically investigate attempts at solving (ii), finally in \autoref{sec:discussion} we assess and compare the techniques developed.
+
+
+\section{Threat Models and Definitions}
+\label{sec:threatmodel}
+
+\begin{comment}
+	- Threat model is realistic: Ristenpart 2009. Achieve random and targeted co-residence, establish communication channels
+	- Show that model still held a few years later with Xu 2015 and Varadarajan 2015. Even though Amazon had changed their policy slightly
+	- Lack of more recent study, could be "due" very soon
+\end{comment}
+
+
+\paragraph{} There are two threat models that we wish to study when considering the breaking of isolation boundaries in IaaS cloud services. These models are closely related and result respectively in \textit{cross-VM covert channel attacks} and \textit{cross-VM side channel attacks}. In this section, we present these models separately and show their similarities. In both models, the attacker is given the power to create multiple accounts with the service provider and launch multiple instances under each account. The attacker's accounts are standard in all ways and are limited to the tools provided by the cloud service. We do not limit the attacker's budget, however expenditures should be measured to assess practicality.
+
+\paragraph{Cross-VM covert channel attacks --} Under this first model, the attacker's goal is to obtain co-located VMs and exchange information between at least two VMs with a steady bit-rate. In doing so, the attacker establishes what Lampson defined as a \textit{covert channel}: a channel ``not intended for information transfer at all, such as the service program's effect on the system load.'' \cite{Lampson1973}. Should the attacker obtain co-located VMs, we will refer to one of them as the \textit{sender} VM and the other as the \textit{receiver} VM. Since these channels are often symmetrical, these labels are interchangeable.
+
+\paragraph{Cross-VM side channel attacks --} The second threat model is more restrictive. Here, the attacker is faced with a target VM that is not under her control. The attacker's goal is to co-locate one of her VMs with the target VM and extract meaningful information from the target. This scenario is akin to a covert channel where the target VM is a sender that does not cooperate with the receiver. In this case, the ``receiver'' (which we often call \textit{attacker}) needs to spy on the ``sender'' (\textit{victim}). This asymmetric channel is called a \textit{side channel}. Notice that an attacker able to establish a side channel is also able to establish a covert channel. The converse proposition is not necessarily true.
+
+
+\section{Placement Vulnerabilities}
+\label{sec:placement}
+
+
+\subsection{The Breakthrough}
+\paragraph{} In 2009, Ristenpart \textit{et al.} published a breakthrough paper \cite{Ristenpart2009} that is unanimously cited as the birth of the field we are surveying here. In this study, the authors were able to obtain co-located VMs on Amazon EC2 with a non-negligible probability at a relatively low cost. Furthermore, they succeeded in both obtaining co-location between two random VMs and co-location with a target VM. The ability to achieve co-location with such probabilities is later defined in \cite{Varadarajan2015} as a \textit{placement vulnerability}. It is seen as an exploitable feature of the service provider's \textit{placement policy}: the policy by which the provider assigns a new VM to a physical machine.
+
+\paragraph{} To produce these results, Ristenpart \textit{et al.} conducted many valuable experiments. First, they partially reverse-engineered the EC2 placement policy (although this has changed since). In doing so, they were able to map how certain user-chosen parameters affect an instance's IP address. Using this mapping, the authors developed heuristics to gain higher chances of achieving co-residence. Furthermore, the knowledge acquired about EC2's network topology allowed the authors to develop computationally cheap co-location tests. Finally, the authors established multiple covert-channels as a proof-of-concept that co-location is a security threat. These channels were extremely slow (under 1 bit-per-second) but acted as an invitation for other researchers to join their efforts.
+
+\subsection{Follow-up studies}
+
+\paragraph{} In 2015, two simultaneous studies were published \cite{Varadarajan2015,Xu2015} that re-examined the results shown in \cite{Ristenpart2009}. Both papers point to the fact that Amazon had changed its placement policy and increased its security in response to \cite{Ristenpart2009}. Indeed, most of the network information leveraged by Ristenpart \textit{et al.} had now been obfuscated from end-users \cite{Xu2015}, thus invalidating the heuristics and co-residency tests developed. However, both studies were able to once again achieve co-residence at low costs with high probability. 
+
+\paragraph{} In \cite{Varadarajan2015}, Varadarajan \textit{et al.} formalised the security question that is VM co-location in the cloud. The authors provided formal mathematical definitions for the probability of obtaining co-located instances under a random placement policy and the cost of obtaining co-located instances using a specific attack strategy. They then identified the variables that are under the attacker's control and those that form part of the environment to perform experiments on the effects of each of the variables. Using those results, the authors offered multiple placement strategies and evaluated them on all three major IaaS cloud platforms. Unfortunately, the authors only presented their results relative to a benchmark; their strategies being at most ten times more likely to obtain co-residence than in a random placement policy setting, and up to \$114 cheaper.
+
+\paragraph{} Xu and Wu \cite{Xu2015} followed a different approach. Similarly to the original work of \cite{Ristenpart2009}, they focused on network probing to guess an instance's location within the cloud. As a result, their study provides a more in-depth exploration of the changes in Amazon's network management. Their strategy to co-locate VMs can be seen as an extension of the heuristics developed in \cite{Ristenpart2009}, with adaptations made to counter-act EC2's improved security. Results are presented in absolute value. When launching the cheapest VMs offered by Amazon, the authors achieved random co-residence in approximately 100 minutes while spending less than \$5 \cite{Xu2015}. Achieving targeted co-residence required to launch more instances. In this case, financial costs were higher, however the time necessary for the attack did not increase since fewer co-residency checks were needed (in this setting, the attacker only checks the instances launched, rather than checking for every instance pair as is the case in the random co-residence experiment).
+
+\paragraph{} Interestingly, both papers implemented the same testing method to check for co-residence. This method is based on the \textit{memory bus contention} covert channel technique developed in \cite{Wu2012} which we will cover in \autoref{sec:membus}. Both studies also explored a novel feature in EC2 known as Virtual Private Cloud (VPC). Using VPC, users may choose to logically isolate their network of instances from the rest of EC2. However, as both studies point out, this does not prevent instances from sharing hardware with other users. Achieving co-location with an instance residing in a VPC is still possible but may be up to three times more costly than a generic target \cite{Xu2015}.
+
+\paragraph{} As of today (2020), no further research has been published to update these results. IaaS cloud computing is a fast moving industry. There is very little doubt that service providers have already adapted their systems following these publications nearly five years ago. A follow-up study is probably overdue, ideally using the definitions developed in \cite{Varadarajan2015} to somewhat standardise results.
+
+
+\section{Communication Channels through Shared Hardware}
+\label{sec:attacks}
+
+\paragraph{} In this section, we will investigate attacks that were attempted in the wild to answer objective (ii): how can we use the shared hardware to bypass software isolation. We present these attacks chronologically to give the reader a better sense of the challenges at stake and how the state-of-the-art improved. 
+
+Early years of the field were marked by clear trends in research efforts. Indeed the first few years were marked by attempts at building better covert channels with existing techniques \cite{Ristenpart2009,Xu2011,Zhang2012} (\autoref{sec:firstera}). Faced with practical challenges, the second trend was to search for different approaches \cite{Wu2012,Xiao2013} (\autoref{sec:membus}). In a third movement, researchers started developing new techniques and improving existing ones to overcome the initial challenges \cite{Gruss2016,Irazoqui2015,Liu2015,Yarom2014} (\autoref{sec:techniques}). As the field grew and attracted new researchers and ideas, efforts were less clustered into trends and all three approaches were adopted concurrently \cite{Disselkoen2017,Maurice2015,Pessl2016} (\autoref{sec:recent}).
+
+ Before we investigate each of the periods, we introduce some necessary technical background in \autoref{sec:background}.
+
+\begin{comment}
+	- How do these techniques fare in the wild?
+	- Present chronologically? With each success describe the next challenge. With each failure, describe what needs to be improved
+	- Which studies implemented what, and to which degree of success?
+	- Link to current day using Spectre & Meltdown (this is where all the researchers cited here focused in 18/19)
+\end{comment}
+
+\subsection{Technical Background}
+\label{sec:background}
+
+
+\paragraph{Establishing Channels --} On a very high level, the method used to create a communication channel through shared hardware is generally the same: find a process that can be initiated by one VM, that will cause a measurable change in hardware for the second VM to observe. In the case of covert channels, this can be any process; in the case of side channels, the process must be part of the victim's naturally occurring execution.
+
+There are two properties of interest when building cross-VM communication channels. The first one is the communication speed, which can be measured as its average bit-rate. In theory, attacks targeting faster hardware should allow faster channels. The second property is error-resistance, which is usually measured by the error rate. As we will see in the following section, there are many possible sources of errors. Understanding and characterising these will dramatically improve performance.
+
+\paragraph{Processors, Cores and Caches: a Quick Presentation of our Protagonists --} As mentioned above, attacking faster hardware components brings the hope of better results. Therefore, many attacks focused on \textit{central processing units} (\textit{CPU}, or colloquially \textit{processor}). Modern CPUs have multiple \textit{cores}, which are smaller processing units that allow the CPU to process tasks in parallel. 
+
+Processors are much faster than memory and therefore are often stuck waiting for memory fetches to finish executing. To minimise this issue, CPUs are equipped with built-in memory units called \textit{caches}. These units are much faster than regular memory, however they are much more expensive to produce. As a result, they often have small capacities. In a cache, data is store in \textit{lines} of $l$ bytes. Line are themselves arranged into \textit{sets}.
+
+To achieve an optimal balance between performance and cost, caches are often arranged into multiple layers with different speed/cost trade-offs. Recent Intel architectures make use of three levels of cache L1, L2 and L3. These are ordered from fastest (L1) to slowest (L3). In virtue of being the last level of cache, L3 is adequately named the Last Level Cache (LLC). When the processor tries to access a value in memory, it starts by checking the first and fastest layer of cache (L1). If the value is present in the cache (a \textit{cache hit}) the memory access is completed, if the value is absent from the cache (a \textit{cache miss}) the processor checks the next level of cache until it eventually reaches the main memory \cite{Maurice2015}.
+
+In Intel multi-core processors, each core has its own private L1 and L2 caches. The LLC is connected to all cores and is fully accessible by all of them \cite{Maurice2015}. Furthermore, in some architectures, the LLC is said to be \textit{inclusive}: in that case, the LLC is a superset of the earlier layers of cache.
+
+Throughout this survey, unless mentioned otherwise, a processor will refer to an Intel x86 processor. The exact model under study often depends on the year in which a specific experiment was run. We discuss this heavy bias towards Intel processors in \autoref{sec:discussion}.
+
+% TODO Check for bit vs byte rates
+
+\subsection{2009-12: The \textit{Prime+Probe} era}
+\label{sec:firstera}
+
+\paragraph{} As mentioned in \autoref{sec:placement}, the first attack to be performed in the cloud was the proof-of-concept covert channels presented in \cite{Ristenpart2009}. Ristenpart \textit{et al.} \cite{Ristenpart2009} targeted the L2 cache as a shared resource and applied a method developed in \cite{Tromer2009} called \textit{Prime+Probe}. Here we assume that two parties, the sender and the receiver, have access to a shared cache. The receiver first \textit{primes} a target \textit{cache set}: the \textit{set} is filled up by values known to the receiver. The sender then selectively evicts certain \textit{lines} of the \textit{set} by loading their own data. The receiver can then try to re-access their data, thus \textit{probing} the \textit{set} to check if the values from the \textit{prime} step are still present. By accessing these values and measuring the time taken for a memory fetch, the receiver will observe fast fetches for data that is still present (cache hits) and slow fetches for data that had been evicted (cache misses). Both parties can therefore agree to a protocol where an eviction represents a 1 and the lack thereof represents a 0. Notice that the \textit{Probe} step fills up the \textit{cache set} with data known to the receiver and therefore doubles up as a \textit{Prime} step to transmit the next symbol.
+
+The covert channel implemented in \cite{Ristenpart2009} uses a shared L2 cache and achieves a bit rate of 0.2 bits-per-second (bps). The authors however clarify that no attempt at optimisation were made.
+
+\paragraph{} In 2011, Xu \textit{et al.} \cite{Xu2011} implement the same L2 cache covert channel using \textit{Prime+Probe} and proceed to optimise the protocol. Using their refined protocol, they approximate the maximum bit-rate that such a channel can achieve in a laboratory environment. While their calculations show that bit-rates slightly over 200bps are achievable, their experiments on EC2 yield results order of magnitude below. Indeed their fastest channel only yielded 10.46 bps with an error rate of 28.13\%. The authors were able to obtain an error-free channel (0\% error rate) by sending single bits multiple times. This however reduced the effective bit-rate even further to 1.27 bps.
+
+Xu \textit{et al.} \cite{Xu2011} identify many of the challenges that slowed down their attack. Firstly, relying on the L2 cache implies that both parties need to be executing on the same core. While \cite{Ristenpart2009} showed that VM co-location could be achieved, this does not guarantee that both VMs will be scheduled to use the same core for an extended period of time. The attack therefore suffers from these changes in scheduling. They conclude that the attack could be useful in the form of a side-channel to extract short secrets such as cryptographic keys. This approach became the dominant one for the next few years.
+
+\paragraph{} The first study to attempt such a cross-VM side channel attack was \cite{Zhang2012}. Implementing a variant of the \textit{Prime+Probe} method, the authors managed to spy on a decryption process and exfiltrate the private key. However, their mitigations against the issues faced by Xu \textit{et al.} \cite{Xu2011} were a collection of ad-hoc processes. While the attack worked in a very specific setting, it could definitely not be transferred into the cloud, nor would it be practical on a machine outside of the laboratory.
+
+
+\subsection{2012-13: Exploring hardware resources}
+\label{sec:membus}
+
+\paragraph{} In 2012, as a caveat to the doctrine described above (build side channels to steal short but extremely important information), Wu \textit{et al.} \cite{Wu2012} attempted to render covert channel attacks applicable in more restrictive settings, with better bandwidth and less errors. First, they identified with greater precision the sources of errors that hindered the success of \cite{Xu2011}. They point to three challenges: \textit{addressing uncertainty}, \textit{scheduling uncertainty} and \textit{cache limitations}. We briefly summarise these issues and then present the authors' solution.
+
+\textit{Addressing uncertainty} refers to the many layers of virtualisation between physical memory addresses and the addresses that are actually shown to the end-user. Indeed, the user's operating system (OS) typically implements memory virtualisation. However, the addresses seen by the user's OS are themselves virtual addresses provided by the hypervisor. There are therefore at least two layers of virtualisation between a user-accessible address and a physical address. This is true for both the sender and receiver, thus adding complexity.
+
+\textit{Scheduling uncertainty} is a harder problem to solve. Indeed, the scheduling algorithm used by the cloud provider is mostly unknown to the attacker. However, attacks such as those presented in \cite{Ristenpart2009}, \cite{Xu2011} and \cite{Zhang2012} require that both parties are executed in a strict round-robin. Out-of-order execution or the execution of a third party could completely thwart these attacks.
+
+Finally, \textit{cache limitations} addresses the fact that a shared cache is not always available. Wu \textit{et al.} \cite{Wu2012} point out the fact that L2 caches are not shared between cores. Furthermore, cloud providers make use of multi-processor machines, thus removing the hope for a shared LLC.
+
+Wu \textit{et al.} \cite{Wu2012} solve these issues by considering a different hardware resource, the memory bus, and executing the sender and receiver in parallel. In older multi-processor systems, a memory bus would connect all processors to all available memory units. In modern systems, the memory bus is not implemented by a single connection, however all components remain interconnected. The authors noticed that executing atomic memory instructions cause the memory bus (or the equivalent inter-connect) to enter a state of contention, where only the issuer of the instruction can access it. This contention is observable system-wide since all other users are temporarily prevented from accessing memory. The two states of the memory bus (contended and contention-free) can therefore be used to encode binary information.
+
+The authors developed a protocol that takes advantage of this property and implemented it on Amazon EC2. Their \textit{in vivo} experiment yielded a bit-rate of 107.9 bps with an error rate of 0.75\%. This is a drastic improvement on previous state-of-the-art. Furthermore, this method provides greater flexibility with regards to the shared hardware. Indeed the channel stands as long as the sender and receiver are co-resident and executed at the same time, regardless of which processor and which core they are operating on. This property explains why the \textit{memory bus contention} method was used in both \cite{Varadarajan2015} and \cite{Xu2015} as a robust co-residency test.
+
+\paragraph{} Xiao \textit{et al.} \cite{Xiao2013} make a similar attempt at deviating from cache-based attacks to solve the three challenges described above. Here, the authors make use of shared memory contents to take advantage of a process known as \textit{memory de-duplication}.
+
+\textit{Memory de-duplication} is a resource optimisation process whereby the hypervisor scans the memory contents of its guest VMs for identical content. Should two or more VMs share an entire page of memory, the hypervisor only saves one version of it and grants access to all the relevant VMs. If one VM modifies the page's contents, the hypervisor creates a private copy for that VM and implements the requested changes; this is known as a \textit{copy-on-write} policy. This however introduces a timing vulnerability as first shown in \cite{Suzaki2011}. Indeed, \textit{copy-on-write} implies that a write operation will take longer on a memory page that is shared with other VMs. The authors of \cite{Suzaki2011} use this property to detect the presence of other VMs.
+
+Xiao \textit{et al.} \cite{Xiao2013} use a technique similar to \textit{Prime+Probe} but apply it to memory pages. Both the sender and receiver VM load a large file into memory, occupying multiple pages. After a short waiting time, the hypervisor will have noticed the identical memory pages and de-duplicated them. The sender VM selectively edits parts of the file that belong to specific pages. The receiver VM then tries to write to the entire file page-by-page and times these operations. Modified pages will take longer to write to. Once again this timing difference allows the receiver VM to deduce the sender's activity, thus receiving binary information (modified vs not modified pages).
+
+While this process circumvents the issues of \textit{addressing uncertainty}, \textit{scheduling uncertainty} and \textit{cache limitations}, it yields a much slower attack. Indeed with every round, both parties need to load a large file and wait for the hypervisor to apply memory de-duplication. As a result, the authors measured a maximum bit-rate of 90 bps in a laboratory environment. Thus the \textit{memory de-duplication} attack is an improvement on previous cache-based attacks, however this solution is less applicable and slower than that presented in \cite{Wu2012}.
+
+\subsection{2014-16: New and improved cache-based attacks}
+\label{sec:techniques}
+
+
+\paragraph{} Returning to the doctrine of building small capacity channels that steal important secrets, research once again focused on the processor cache. Researchers were determined to build attacks that could do the most damage rather than improving the communication process.
+
+\paragraph{} In light of this new focus, Yarom and Falkner \cite{Yarom2014} present a novel technique to build cross-VM side channels. The so-called \textit{Flush+Reload} technique allows an attacker to spy on a process executed by the victim on the condition that both VMs have access to a shared page of memory. This technique relies on flushing \textit{lines} from the LLC. Recall that the LLC is the last level cache and is shared across all cores. Furthermore, in Intel processors the LLC is inclusive of earlier layers of cache: any data that is present in a core's private L1 and L2 must also be present in the LLC. To maintain inclusiveness when a \textit{line} is flushed from the LLC, that same \textit{line} is also flushed from earlier levels of cache. Therefore \textit{Flush+Reload} is a cache attack that partly mitigates the \textit{cache limitations} described in \cite{Wu2012} by working across cores. Furthermore, it operates at a finer level of granularity than \textit{Prime+Probe}, using \textit{cache lines} rather than \textit{cache sets}.
+
+The attack works as follows. Assume an attacker VM and a victim VM are co-resident and share a page of memory -- in the case presented in \cite{Yarom2014}, they share the instructions to run a square-and-multiply algorithm as part of a standard cryptographic library. The attacker starts by flushing \textit{cache lines} that correspond to the execution of the shared code from the LLC. After a short wait, the attacker tries to reload those same instructions from the shared memory page. If the attacker observes a cache hit, she can deduce that the victim ran those instructions and therefore storing them in the LLC. On the other hand if the attacker observes a cache miss, she can deduce that the code was not executed. This is particularly hurtful for implementations of RSA where the execution of instructions (square, multiply and/or reduce) is dependent on individual bits of a private key.
+
+While this attack does work across cores in virtualised environments, it faces a couple of limitations that make it impractical in the cloud. Firstly, it is assumed that both VMs share a page of memory. Although this is likely in a standard setting where memory de-duplication is enabled, this feature had been removed from IaaS hypervisors as a security measure following the publications of \cite{Suzaki2011} and \cite{Xiao2013}. Secondly, the attack is sensitive to interference on the LLC. Should a third party make use of the LLC at the same time as the victim, the attacker may register false readings.
+
+The invention of \textit{Flush+Reload} is nonetheless significant. Indeed, this technique is faster to execute than the original \textit{Prime+Probe} method \cite{Yarom2014} as it requires fewer memory accesses with each round. With this discovery comes the promise of further improving cache-based attacks. The technique is later implemented in an cross-VM side channel attack against an implementation of AES \cite{Irazoqui2014}. However, since \cite{Irazoqui2014} does not present an improvement of the technique it is outside of the scope of this review. Similarly, Zhang \textit{et al.} \cite{Zhang2014} implement this technique on a platform-as-a-service cloud, but do not contribute to answering the subject of this survey.
+
+
+\paragraph{} In 2015, Liu \textit{et al.} \cite{Liu2015} and Irazoqui \textit{et al.} \cite{Irazoqui2015} simultaneously adapted the \textit{Prime+Probe} technique to work across cores via the LLC and without the need for shared memory contents. This improvement is especially important as it sheds off another requirement from cache-based attacks.
+
+The main challenge that prevented \textit{Prime+Probe} from being applied in the LLC is its size. Indeed, probing the entirety of the LLC would take too long to monitor any meaningful operation on the victim's side \cite{Liu2015}. On the other hand, \textit{Flush+Reload} thrives in the LLC since the shared memory contents allow the attacker to only monitor specific \textit{lines} of the LLC.
+
+In both works \cite{Irazoqui2015,Liu2015}, the authors reverse-engineered the undisclosed mapping from memory to the LLC to be able to monitor specific areas of the LLC. Using this mapping, a sender and receiver can target a subset of the LLC to apply the \textit{Prime+Probe} technique we have already described. In this case, the LLC's size is no longer an issue as long as both parties can agree on a region to target. Thus we have the first cache-based attack that works across cores and does not require shared memory.
+
+% LLC is larger than other caches. Probing it entirely would take too long to monitor cryptographic processes.
+% Flush+Reload works on LLC because shared memory ensures that both parties can access the same parts of the LLC
+% Both works partially-reverse engineer the mapping of memory to LLC (not public) to ensure that attacker can monitor a specific section of the LLC. Both parties can now access the same area of the LLC for prime+probe without the need for shared memory.
+
+\paragraph{} The \textit{Flush+Reload} technique was further improved in 2016 by Gruss \textit{et al.} \cite{Gruss2016} who introduced the \textit{Flush+Flush} technique. This attack works in the same way as \textit{Flush+Reload}, however here the attacker VM simply loops flushing operations and times their execution. Indeed, the authors noticed that a flush on an already-flushed line of cache is executed faster than a flush on a populated line of cache. Thus \textit{Flush+Flush} is similar in all ways to \textit{Flush+Reload}, with the exception that it is faster to execute. However, the difference in timing of these flush operations may be harder to measure than cache hits/misses and lead to higher error rates.
+
+To illustrate their contribution, Gruss \textit{et al.} \cite{Gruss2016} built covert channels through the LLC using all three cache attacks we have seen so far (improved \textit{Prime+Probe}, \textit{Flush+Reload} and \textit{Flush+Flush}). Results show that \textit{Flush}-based techniques are faster than the LLC \textit{Prime+Probe} \cite{Gruss2016}. Under certain conditions, \textit{Flush+Flush} is shown to establish the fastest covert channel -- up to 496 Kbps -- observed until then in a virtualised, local environment (as opposed to ``in the cloud'').
+
+Notice however, that \textit{Flush+Flush} suffers from the same requirements as \textit{Flush+Reload}, namely that the attacker and victim (or receiver and sender) share memory contents. Indeed, although the attacker does not access the memory contents in this technique, she still needs to know which line(s) of cache to flush. This information can only be gathered by guessing (unlikely), or by having a copy of the memory contents to load herself. Thus, while \textit{Flush+Reload} and \textit{Flush+Flush} are faster than the newly improved \textit{Prime+Probe}, they are both impractical on IaaS clouds in their current states.
+
+
+
+\subsection{2015-17: Try building, try something different, keep improving}
+\label{sec:recent}
+
+\paragraph{} In this final, more recent period of research, all three approaches explored so far are attempted concurrently.
+
+\paragraph{} In 2015, Maurice \textit{et al.} \cite{Maurice2015} returned to the ``try building'' approach and attempted to establish a cross-core cache-based covert channel. By now, we hope that the reader recognises that a cache-based cross-core attack will likely make use of the LLC. Indeed this is the case in \cite{Maurice2015}. Note that this paper was published before the improved \textit{Prime+Probe} method of \cite{Irazoqui2015} and \cite{Liu2015}. Maurice \textit{et al.} \cite{Maurice2015} therefore make their own attempt at adapting a \textit{Prime+Probe}-style technique that does not require shared memory to the LLC. However, their approach is less successful than those of \cite{Irazoqui2015} and \cite{Liu2015}, and is therefore of lesser interest in answering our survey's questions.
+
+\paragraph{} The publication of \cite{Pessl2016} by Pessl \textit{et al.} in 2016 marks the first attempt since 2012-13 at deviating from cache-based attacks -- ``try something different''. Indeed this attack is most comparable to the \textit{memory bus} covert channel presented in \cite{Wu2012}. Here the authors target DRAM (dynamic random access memory) as a shared resource in multi-processor systems. In order to better present this attack, we must make an aside to describe typical DRAM hierarchy.
+
+The following explanation is adapted from the background section of \cite{Pessl2016}. In multi-processor settings, each processor is equipped with a memory controller and has a direct channel to a dual in-line memory module (DIMM). Naturally, the processors are interconnected otherwise this would not be a multiprocessor system. Each DIMM is then divided into ranks, then banks and finally rows. A memory address specifies a physical location: this means specifying which row, of which bank, in which rank, of what DIMM. In Intel systems, the mapping from a memory address to a physical location is performed using an undisclosed function. This mapping is known as \textit{DRAM addressing}.
+
+Pessl \textit{et al.} \cite{Pessl2016} develop a method to remotely reverse-engineer a system's \textit{DRAM addressing} function. Having recovered this mapping, an attacker can control the specific location in silicon where her data is saved. A sender and receiver running natively on the same machine can use this mapping to ensure that they are saving data to rows belonging to the same bank (this implies within the same rank of the same DIMM).
+
+The second observation made by the authors is that each bank has a \textit{row buffer} \cite{Pessl2016}. A row requested by a processor is first loaded into the \textit{row buffer} and then sent across the memory bus. Although it is not its purpose, this \textit{row buffer} behaves like a cache: sending the same row a second time is faster, whereas sending a different row creates a \textit{row conflict} and yields a slower transmission. Pessl \textit{et al.} \cite{Pessl2016} therefore develop a protocol that takes advantage of the two states of the \textit{row buffer}.
+
+While not acknowledged in the paper, their protocol is in fact an application of the \textit{Prime+ Probe} method to the row buffer. First, the receiver \textit{primes} the \textit{row buffer} by requesting its data from the DRAM unit, thus filling up the \textit{row buffer}. The sender can then send a 0 by doing nothing, or send a 1 by accessing the data it has stored in the same bank. Doing so will create a \textit{row conflict} which the receiver will observe in the \textit{probe} step. As we have already mentioned this \textit{probe} step acts as a \textit{prime} step for the next symbols.
+
+
+Performing the attack in a virtualised environment introduces the well-known issue of \textit{addressing uncertainty}. In this case, the method for reverse-engineering \textit{DRAM addressing} only works under specific hypervisor settings. Running two VMs on their own servers with the necessary hypervisor settings, Pessl \textit{et al.} \cite{Pessl2016} were able to use their technique to build a covert channel yielding a raw bit-rate of 596kbps (kilobits-per-second) for a 0.4\% bit-error rate. 
+
+These results are orders of magnitude higher than the only other cross-processor attack presented in \cite{Wu2012}. The first reason for this is that the DRAM addressing attack can be parallelised. Indeed while \cite{Wu2012} makes use of the unique memory bus, Pessl \textit{et al.} \cite{Pessl2016} use \textit{row buffers} of which there are multiple instances within a system. Recall that each bank has a row buffer, and that each rank has multiple banks, and each DIMM has multiple ranks. Thus for $d$ DIMMs, $r$ ranks and $b$ banks, there are $d \times r \times b$ row buffers that can be used in parallel. Secondly, we can assume that part of the speed-up observed is in fact due to more recent hardware.
+
+Overall, this attack is the second cross-processor, cross-core attack that does not require shared memory. However it requires a specific configuration of the hypervisor in order to be attempted across VMs. Such a configuration is out of the attacker's control in the threat model we study in this survey.
+
+\paragraph{} Recent papers have also attempted to improve the existing techniques. In \cite{Disselkoen2017}, Disselkoen \textit{et al.} present an improved version of \textit{Prime+Probe}, which they name \textit{Prime+Abort}. This method removes the need for precise timing measurements to monitor cache hits and misses. However, \textit{Prime+Abort} has not yet been implemented in a cross-VM channel, and therefore remains out of the scope of our review for the time being.
+
+\paragraph{} The most promising attack to be attempted on an IaaS cloud is the one presented in \cite{Maurice2017}. Here, Maurice \textit{et al.} \cite{Maurice2017} make use of the state-of-the-art \textit{Prime+Probe} technique presented in \cite{Irazoqui2015} and \cite{Liu2015}. In this paper, the authors focused on using existing techniques to build a robust cross-VM channel in the cloud. Assuming that obtaining co-location is possible with the required effort \cite{Ristenpart2009,Varadarajan2015,Xu2015}, they instead obtained co-located VMs by requiring a dedicated machine from Amazon EC2. This functionality is offered by the cloud platform in exchange of a cost premium. Note that this attack relies on \textit{Prime+Probe}, therefore requires that both the sender and receiver are executed on the same CPU.
+
+In addition to implementing the \textit{Prime+Probe} attack, Maurice \textit{et al.} \cite{Maurice2017} provide a protocol for the sender and receiver VMs to agree on cache sets to communicate through, incidentally solving \textit{addressing uncertainty}. The channel is then implemented on Amazon EC2 using various non-trivial error correction methods. Furthermore, Maurice \textit{et al.} \cite{Maurice2017} implement a synchronisation mechanism to solve \textit{scheduling uncertainty} and the errors that it generates. Under various stress conditions, their channel maintains a steady bit-rate between 37 and 45 kilobytes-per-second with a 0.00\% error rate. To showcase their achievements, the authors implement a fully functioning SSH connection across the two VMs.
+
+\section{Comparison and Discussion}
+\label{sec:discussion}
+
+\paragraph{} In this final section, we wish to summarise the research achievements in the field, provide comparisons between various techniques and contemplate the possibility of future work.
+
+\paragraph{Attack summary --} To obtain a functional cross-VM communication channel on an IaaS cloud, an attacker must first force co-location. This was shown to be possible in \cite{Ristenpart2009,Varadarajan2015,Xu2015}. Then, the attacker must find a process that meets the following requirements:
+
+	\begin{enumerate}[label=\alph*)]
+		\item Can be initiated from within an unprivileged VM
+		\item Works across cores
+		\item Does not require shared memory contents between both parties
+		\item Works across processors
+	\end{enumerate}
+
+\autoref{table:comparison} aggregates all the techniques presented above and displays how they respond to these requirements
+
+
+\begin{comment}
+	
+
+
+\begin{table}[hbt]
+	\begin{center}
+  		\begin{tabular}{c|c|c|c|c|c|c|c}
+    		Method & Used in & a) & b) & c) & d) & Achievable Bit Rate & Error Rate \\
+    		\hline
+    		Memory Bus Contention & \cite{Wu2012} & \checkmark & \checkmark & \checkmark & \checkmark & & \\
+    		\hline
+   			DRAM addressing & \cite{Pessl2016} &  & \checkmark & \checkmark & \checkmark & & \\
+   			\hline
+   			\textit{Prime+Probe} & \cite{Irazoqui2015,Liu2015,Maurice2015,Maurice2017,Pessl2016,Ristenpart2009,Xu2011,Zhang2012} & \checkmark & \checkmark & \checkmark &  & & \\
+   			\hline
+   			\textit{Flush+Reload} & \cite{Irazoqui2014,Yarom2014,Zhang2014} & \checkmark & \checkmark &  &  & & \\
+   			\hline
+   			\textit{Flush+Flush} & \cite{Gruss2016} & \checkmark & \checkmark &  &  & & \\
+   			\hline
+   			Memory de-duplication & \cite{Xiao2013} & \checkmark & \checkmark &  & \checkmark & & \\
+  		\end{tabular}
+  		\caption{Summary table of attempted methods}
+  		\label{table:comparison}
+  	\end{center}
+\end{table}
+
+\end{comment}	
+
+\begin{table}[hbt]
+	\begin{center}
+  		\begin{tabular}{c|c|c|c|c|c|c}
+    		Year Developed & Method & Used in & a) & b) & c) & d) \\
+    		\hline
+    		
+    		2009 & \textit{Prime+Probe} v1 & \cite{Ristenpart2009,Xu2011,Zhang2012} & \checkmark & & \checkmark & \\
+    		\hline
+    		2012 & Memory bus contention & \cite{Wu2012} & \checkmark & \checkmark & \checkmark & \checkmark  \\
+    		\hline
+   			2013 & Memory de-duplication & \cite{Xiao2013} & \checkmark & \checkmark &  & \checkmark  \\
+   			\hline
+   			2014 & \textit{Flush+Reload} & \cite{Irazoqui2014,Yarom2014,Zhang2014} & \checkmark & \checkmark &  &   \\
+   			\hline
+   			2015 & \textit{Prime+Probe} v2 & \cite{Irazoqui2015,Liu2015,Maurice2015,Maurice2017} & \checkmark & \checkmark & \checkmark &   \\
+   			\hline
+   			2016 & \textit{Flush+Flush} & \cite{Gruss2016} & \checkmark & \checkmark &  &   \\
+    		\hline
+   			2016 & DRAM addressing & \cite{Pessl2016} &  & \checkmark & \checkmark & \checkmark  \\
+   			\hline
+   			2017 & \textit{Prime+Abort} & TBD & TBD & TBD & TBD & TBD  \\
+   			
+   			
+
+  		\end{tabular}
+  		\caption{Summary table of attempted methods}
+  		\label{table:comparison}
+  	\end{center}
+\end{table}
+
+Notice that out of all the attacks attempted, only one meets all four requirements (\cite{Wu2012}). However, a number of the other studies have been able to implement either a covert channel or a side channel on an IaaS cloud (\cite{Maurice2017,Ristenpart2009,Xu2011}). This is because requirements b) and d) can be worked around with favourable execution conditions. An attacker may, per-chance, find herself sharing the same processor or the same core as her victim. Depending on the scenario, the attacker could even flood a machine with instances such as to guarantee that at least one VM shares the same core and/or processor as the victim. This is in fact the method applied in \cite{Maurice2017} to circumvent the limitations of the \textit{Prime+Probe} method.
+
+Overall, researchers have been successful in establishing cross-VM covert channels. Doing so in the cloud introduces a variety of challenges, however the results shown in \cite{Wu2012} and later in \cite{Maurice2017} prove the existence of an exploitable (and exploited!) vulnerability.
+
+\paragraph{The problem of quantitative comparisons -- } Providing a quantitative comparison of these channels, or individual techniques, is less obvious than it would seem. Indeed, the reader may have already noticed that bit-rates seem to vary widely from one study to the next. All of the attacks presented make use of hardware resources to establish a channel. Therefore, the variation in hardware from one study to the next creates large variations in bit-rates. As such, we recommend to only focus on bit-rates for channels that are implemented against a standard testbed: any commercial, public IaaS cloud. Bit-rates from laboratory experiments are of interest only if a comparable technique was implemented on the same hardware using the same communication protocol.
+
+\paragraph{The hard(ware) question --} All of these studies have heavily focused on Intel processors. This is partly due to their widespread in consumer and commercial hardware. However, another explanation is that other processors were harder to attack. As pointed out in \cite{Irazoqui2016}, commercial-grade AMD processor have more cores-per-processor than Intel's CPUs. Furthermore, in AMD architectures the LLC is rarely shared between cores and if it is, is not inclusive of earlier layers of cache. These properties imply that cache-based attacks such as the ones research had focused on would not function on AMD processors. Similar issues arise in ARM processors.
+
+\paragraph{Other IaaS providers --} Research in this field has also been heavily biased towards Amazon EC2. Indeed, at the time of publication of Ristenpart \textit{et al.}'s \cite{Ristenpart2009} seminal paper, EC2 was the only available public cloud. Subsequent papers focused on it since \cite{Ristenpart2009} provided a proof-of-concept for that service only. The follow-up studies to \cite{Ristenpart2009}, namely \cite{Varadarajan2015} and \cite{Xu2015}, both exposed placement vulnerabilities in Microsoft Azure and Google Compute Engine. However, to our knowledge, no attempt has been made at to measure covert or side channels in those IaaS clouds. 
+
+\paragraph{A final note --} Since 2017, very few relevant papers have been published on this topic. However, this must not be mistaken for a lack of engagement by the research community. In 2018, the now-famous papers describing the \textit{Spectre} \cite{spectre} and \textit{Meltdown} \cite{meltdown} attacks were published. Authors of these papers include many researchers whose work is featured here: Daniel Gruss \cite{Gruss2016,Maurice2017,Pessl2016}, Stefan Mangard \cite{Gruss2016,Maurice2017,Pessl2016},  Michael Schwartz \cite{Maurice2017,Pessl2016} and Yuval Yarom \cite{Liu2015,Yarom2014}. Indeed the expertise gathered by building these covert and side channel attacks partly enabled the discovery of these two security flaws.
+
+Furthermore, research papers have recently focused on detecting such channels. While the processes at stake are very similar to the offensive techniques we explored, these publications are out of the scope of our survey. 
+
+
+
+\section*{Conclusion}
+\label{sec:conclusion}
+
+\begin{comment}
+	- Summarise what happened in this field. From birth with Ristenpart2009 to more recent SSH between two VMs.
+	- What are the achievements and limitations?
+	- Where do we go next?
+\end{comment}
+
+\paragraph{} Over the past decade, researchers have heavily scrutinised the IaaS cloud infrastructure for security issues. In 2009, Ristenpart \textit{et al.} \cite{Ristenpart2009} opened a field of research by showing that Amazon's placement policy was vulnerable to attacks, enabling a malicious party to obtain co-location. Following their proof-of-concept, offensive techniques were developed at a steady pace to break down isolation boundaries between virtual machines on IaaS clouds. Each technique provided new insight into the depths of processor architecture and how to exploit it. Very few attacks have managed to present a fully universal attack vector. Instead many have achieved the desired goal under special circumstances or with slow communication ability. These attack undeniably show that cloud security has much to improve.
+
+Naturally, all these papers point towards mitigations against such attacks. While modifying hardware specifications is costly for cloud providers, restricting the access to certain resources may be a good solution. Stricter hypervisor settings and a stronger placement policy will also contribute to reinforcing cloud security. Finally, clients wary of such attacks already have the option to physically isolate their VMs from the rest of the cloud service by paying a premium to obtain a dedicated machine.
+
+Suggestions for future work in the field include: a renewed study of placement policies, an assessment of the covert channel threat across all three major IaaS cloud providers, a study of these attacks against processors from a wider range of manufacturers and, improvements of promising techniques such as the \textit{DRAM addressing} attack or the \textit{Prime+Abort} method.
+
+
+\newpage
+
+\bibliographystyle{splncs03}
+\bibliography{references}
+
+\end{document}
