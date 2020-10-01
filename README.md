@@ -1,2 +1,5 @@
-1. Install [make](https://en.wikipedia.org/wiki/Make_(software)) and [LaTeX](https://en.wikipedia.org/wiki/LaTeX). 
-2. To build the latest version of the paper (in `main.tex`) simply run `make` in this folder.
+# COMP0057 UCL Research in Information Security
+
+## Literature Review: Establishing Cross-VM Communication Channels in IaaS Public Clouds
+
+Please download `main.pdf` to read the full report.
